@@ -253,14 +253,24 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 			throw new NotImplementedException();
 		}
 
+		double[] localDisplacements;
 		public Tuple<double[], double[]> CalculateResponse(double[] localDisplacements)
 		{
-			throw new NotImplementedException();
+			this.localDisplacements = localDisplacements.Copy();
+			return new Tuple<double[], double[]>(new double[0], new double[0]);
+				
 		}
 
 		public double[] CalculateResponseIntegral()
 		{
-			throw new NotImplementedException();
+
+			//return DiffusionMatrix().Add(ConvectionMatrix()).Add(ProductionMatrix());
+			double[] difConvResponseVector = DiffusionMatrix().Add(ConvectionMatrix()).Multiply(localDisplacements);
+			double[] productionResponseVector = ProductionMatrix().Multiply(localDisplacements);
+
+			return difConvResponseVector.Add(productionResponseVector);
+
+
 		}
 
 		public double[] CalculateResponseIntegralForLogging(double[] localDisplacements)
