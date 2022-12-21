@@ -31,6 +31,7 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 			this.Interpolation = interpolation;
 			this.QuadratureForConsistentMass = quadratureForMass;
 			this.QuadratureForStiffness = quadratureForStiffness;
+			this.localDisplacements = new double[nodes.Count];
 
 			dofTypes = new IDofType[nodes.Count][];
 			for (int i = 0; i < interpolation.NumFunctions; ++i) dofTypes[i] = new IDofType[] { ConvectionDiffusionDof.UnknownVariable };
@@ -75,7 +76,9 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 
 		public IMatrix ProductionMatrix()
 		{
-			return BuildProductionMatrix();
+			if (LinearProduction) { return BuildProductionMatrix(); }
+			else { return BuildNonLinearProductionMatrix(); }
+			
 		}
 
 		public IMatrix PhysicsMatrix()
@@ -198,7 +201,34 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 			production.ScaleIntoThis(material.DependentSourceCoeff * (-1d));
 			return production;
 		}
+	    public Matrix BuildNonLinearProductionMatrix()
+		{
+			int numDofs = Nodes.Count;
+			var production = Matrix.CreateZero(numDofs, numDofs);
+			IReadOnlyList<double[]> shapeFunctions =
+				Interpolation.EvaluateFunctionsAtGaussPoints(QuadratureForConsistentMass);
+			IReadOnlyList<Matrix> shapeGradientsNatural =
+				Interpolation.EvaluateNaturalGradientsAtGaussPoints(QuadratureForConsistentMass);
 
+			for (int gp = 0; gp < QuadratureForConsistentMass.IntegrationPoints.Count; ++gp)
+			{
+				double phi = 0;
+				for (int i1 = 0; i1 < shapeFunctions[gp].Length; i1++)
+				{
+					phi += shapeFunctions[gp][i1] * localDisplacements[i1];
+				}
+				double df_dphi = ProductionFunctionDerivative(phi);
+				Matrix shapeFunctionMatrix = BuildShapeFunctionMatrix(shapeFunctions[gp]);
+				Matrix partial = shapeFunctionMatrix.Transpose() * shapeFunctionMatrix;
+				var jacobian = new IsoparametricJacobian3D(Nodes, shapeGradientsNatural[gp], 1e-20);
+				//double dA = jacobian.DirectDeterminant * QuadratureForConsistentMass.IntegrationPoints[gp].Weight;
+				double c1  = jacobian.DirectDeterminant * QuadratureForConsistentMass.IntegrationPoints[gp].Weight* df_dphi * (-1d);
+				production.AxpyIntoThis(partial, c1);
+			}
+
+			//production.ScaleIntoThis(material.DependentSourceCoeff * (-1d));
+			return production;
+		}
 		public double[] BuildProductionVector()
 		{
 			int numDofs = Nodes.Count;
@@ -253,7 +283,7 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 			throw new NotImplementedException();
 		}
 
-		double[] localDisplacements;
+		double[] localDisplacements ;
 		public Tuple<double[], double[]> CalculateResponse(double[] localDisplacements)
 		{
 			this.localDisplacements = localDisplacements.Copy();
@@ -266,12 +296,71 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 
 			//return DiffusionMatrix().Add(ConvectionMatrix()).Add(ProductionMatrix());
 			double[] difConvResponseVector = DiffusionMatrix().Add(ConvectionMatrix()).Multiply(localDisplacements);
-			double[] productionResponseVector = ProductionMatrix().Multiply(localDisplacements);
+			double[] productionResponseVector = CalculateProductionRepsonse();
 
 			return difConvResponseVector.Add(productionResponseVector);
 
 
 		}
+
+		private static bool LinearProduction = false;
+
+		public double[] CalculateProductionRepsonse()
+		{
+			if (LinearProduction)
+			{ return ProductionMatrix().Multiply(localDisplacements); }
+			else { return CalculateNonLinearProductionRepsonse(); }
+		}
+
+		public double ProductionFunction(double phi)
+		{
+			return material.DependentSourceCoeff * phi;
+		}
+
+		public double ProductionFunctionDerivative(double phi)
+		{
+			return material.DependentSourceCoeff;
+		}
+
+		private double[] CalculateNonLinearProductionRepsonse()
+		{
+			int numDofs = Nodes.Count;
+			var productionVector = Matrix.CreateZero(numDofs, 1);
+			var identity = Matrix.CreateIdentity(numDofs);
+			IReadOnlyList<double[]> shapeFunctions =
+				Interpolation.EvaluateFunctionsAtGaussPoints(QuadratureForConsistentMass);
+			IReadOnlyList<Matrix> shapeGradientsNatural =
+				Interpolation.EvaluateNaturalGradientsAtGaussPoints(QuadratureForConsistentMass);
+
+			for (int gp = 0; gp < QuadratureForConsistentMass.IntegrationPoints.Count; ++gp)
+			{
+				double phi = 0;
+				for (int i1 = 0; i1 < shapeFunctions[gp].Length; i1++)
+				{
+					phi += shapeFunctions[gp][i1] * localDisplacements[i1];
+				}
+
+				double production = ProductionFunction(phi);
+
+				Matrix shapeFunctionMatrix = BuildShapeFunctionMatrix(shapeFunctions[gp]).Transpose();
+
+				var jacobian = new IsoparametricJacobian3D(Nodes, shapeGradientsNatural[gp], 1e-20);
+				//double dA = jacobian.DirectDeterminant * QuadratureForConsistentMass.IntegrationPoints[gp].Weight;
+				double c1 = -jacobian.DirectDeterminant * QuadratureForConsistentMass.IntegrationPoints[gp].Weight * production;
+				productionVector.AxpyIntoThis(shapeFunctionMatrix, c1);
+			}
+
+			//productionVector.ScaleIntoThis(material.IndependentSourceCoeff);
+
+			double[,] vectorDouble = productionVector.CopyToArray2D();
+			double[] result = new double[numDofs];
+
+			for (int i = 0; i < numDofs; i++)
+			{
+				result[i] = vectorDouble[i, 0];
+			}
+			return result;
+		}	
 
 		public double[] CalculateResponseIntegralForLogging(double[] localDisplacements)
 		{
