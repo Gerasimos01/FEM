@@ -40,6 +40,10 @@ namespace MGroup.FEM.Structural.Continuum
 		private double[][] lastStresses;
 		private double[][] DefGradVec;
 
+		public static double dT = 0.1;
+		private double[][,] lastConvergedDefGradTransposed;
+		public double[] velocityDivergence;
+
 		protected ContinuumElement3DNonLinearDefGrad()
         {
         }
@@ -266,11 +270,13 @@ namespace MGroup.FEM.Structural.Continuum
 			//strainsVec = new double[nGaussPoints][]; //MS
 			//strainsVec_last_converged = new double[nGaussPoints][];
 			DefGradVec = new double[nGaussPoints][];
+			lastConvergedDefGradTransposed = new double[nGaussPoints][,];
 			for (int gpoint = 0; gpoint < nGaussPoints; gpoint++)
             {
 				//strainsVec[gpoint] = new double[6]; //MS
 				//strainsVec_last_converged[gpoint] = new double[6];
 				DefGradVec[gpoint] = new double[9];
+				lastConvergedDefGradTransposed[gpoint] = new double[3, 3] { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
 			}
             for (int k = 0; k < numNodes; k++)
             {
@@ -720,12 +726,14 @@ namespace MGroup.FEM.Structural.Continuum
         {
             throw new NotImplementedException();
         }
-        #endregion
+
+		public double[] VolumeLoads() => throw new NotImplementedException();
+		#endregion
 
 
-       
 
-    }
+
+	}
 
 
 }

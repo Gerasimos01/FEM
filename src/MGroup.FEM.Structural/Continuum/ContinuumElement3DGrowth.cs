@@ -16,6 +16,7 @@ using MGroup.FEM.Structural.Helpers;
 using MGroup.MSolve.DataStructures;
 using MGroup.MSolve.Constitutive;
 using MGroup.LinearAlgebra.Providers;
+using MGroup.Constitutive.Structural.Transient;
 
 namespace MGroup.FEM.Structural.Continuum
 {
@@ -29,6 +30,7 @@ namespace MGroup.FEM.Structural.Continuum
 		protected readonly IDofType[][] dofTypes;
 		protected readonly IContinuumMaterial3DDefGrad[] materialsAtGaussPoints;
 		protected IElementDofEnumerator dofEnumerator = new GenericDofEnumerator();
+		private ITransientAnalysisProperties dynamicProperties;
 
 		private readonly int nGaussPoints;
 		private bool isInitialized = false;
@@ -40,11 +42,30 @@ namespace MGroup.FEM.Structural.Continuum
 		private double[][] strainsVec;
 		private double[][] lastStresses;
 		private double[][] DefGradVec;
+		
 		private double lambdag = 1;
+		public static double dT = 0.1;
+		private Matrix[] lastConvergedDefGradTransposed;
+		private Matrix[] deformationGradientsTransposed;
+		public double[] velocityDivergence;
+		public List<double[]> velocityDivergenceOverTimeSteps = new List<double[]>();
+		public double[] velocityDivergenceOverTimeAtGP1
+		{
+			get { return velocityDivergenceOverTimeSteps.Select(x => x[0]).ToArray(); }
+	 	}
+
+		public double[] volumeForce { get; set; }
+
+
 
 		public ContinuumElement3DGrowth(IReadOnlyList<INode> nodes, IContinuumMaterial3DDefGrad material, IQuadrature3D quadratureForStiffness,
-			 IIsoparametricInterpolation3D interpolation, double lambdag = 1)
+			 IIsoparametricInterpolation3D interpolation,
+			 ITransientAnalysisProperties dynamicProperties,
+			 IQuadrature3D quadratureForMass, double lambdag = 1)
 		{
+			this.QuadratureForConsistentMass = quadratureForMass;
+			this.dynamicProperties = dynamicProperties;
+
 			this.nGaussPoints = quadratureForStiffness.IntegrationPoints.Count;
 			this.QuadratureForStiffness = quadratureForStiffness;
 			this.Interpolation = interpolation;
@@ -245,11 +266,16 @@ namespace MGroup.FEM.Structural.Continuum
 
 			totalDisplacements = new double[numNodes][];
 			DefGradVec = new double[nGaussPoints][];
+			lastConvergedDefGradTransposed = new Matrix[nGaussPoints];
+			velocityDivergence = new double[nGaussPoints];
+			deformationGradientsTransposed = new Matrix[nGaussPoints];
 			for (int gpoint = 0; gpoint < nGaussPoints; gpoint++)
 			{
 				//strainsVec[gpoint] = new double[6]; //MS
 				//strainsVec_last_converged[gpoint] = new double[6];
 				DefGradVec[gpoint] = new double[9];
+				lastConvergedDefGradTransposed[gpoint] = Matrix.CreateFromArray(new double[3, 3] { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } });
+				deformationGradientsTransposed[gpoint] = Matrix.CreateFromArray(new double[3, 3] { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } });
 			}
 
 			for (int k = 0; k < numNodes; k++)
@@ -284,7 +310,7 @@ namespace MGroup.FEM.Structural.Continuum
 			double[] jacobianDeterminants = jacobians.Select(x => x.DirectDeterminant).ToArray();
 			//TODO: possibility of caching shapeFunctionNaturalDerivatives or J_0inv
 
-			Matrix[] deformationGradientsTransposed = new Matrix[nGaussPoints];
+			//Matrix[] deformationGradientsTransposed = new Matrix[nGaussPoints];
 			//Matrix[] GL = new Matrix[nGaussPoints];
 			for (int npoint = 0; npoint < nGaussPoints; npoint++)
 			{
@@ -301,6 +327,13 @@ namespace MGroup.FEM.Structural.Continuum
 					deformationGradientsTransposed[npoint][2, 2], deformationGradientsTransposed[npoint][1, 0], deformationGradientsTransposed[npoint][2, 1],
 					deformationGradientsTransposed[npoint][0, 2], deformationGradientsTransposed[npoint][2, 0], deformationGradientsTransposed[npoint][0, 1],
 					deformationGradientsTransposed[npoint][1, 2], };//MS
+
+				var DdeformationGradientsTransposed_DT = (deformationGradientsTransposed[npoint] - lastConvergedDefGradTransposed[npoint]).Scale(1/dT);
+				var DefGradInverse = deformationGradientsTransposed[npoint].Transpose().Invert();
+				var velocityGradient = DdeformationGradientsTransposed_DT.Transpose() * DefGradInverse;
+				velocityDivergence[npoint] = velocityGradient[0, 0] + velocityGradient[1, 1] + velocityGradient[2, 2];
+				
+
 			}
 		}
 
@@ -794,6 +827,13 @@ namespace MGroup.FEM.Structural.Continuum
 			//	{ strainsVecLastConverged[npoint][i1] = strainsVec[npoint][i1]; }
 			//}
 
+			for (int npoint = 0; npoint < nGaussPoints; npoint++)
+			{
+				lastConvergedDefGradTransposed[npoint] = deformationGradientsTransposed[npoint];
+			}
+			velocityDivergenceOverTimeSteps.Add(velocityDivergence);
+			velocityDivergence = new double[nGaussPoints];
+
 			foreach (IContinuumMaterial3D m in materialsAtGaussPoints) m.CreateState();
 
 			if (externalState != null && (externalState is IHaveStateWithValues))
@@ -823,16 +863,74 @@ namespace MGroup.FEM.Structural.Continuum
 		//{
 		//    throw new NotImplementedException();
 		//}
+		public virtual IMatrix MassMatrix() => BuildLumpedMassMatrix();
 
-		public virtual IMatrix MassMatrix()
+		public Matrix BuildLumpedMassMatrix()
 		{
-			throw new NotImplementedException();
+			int numberOfDofs = 3 * Nodes.Count;
+			var lumpedMass = Matrix.CreateZero(numberOfDofs, numberOfDofs);
+			IReadOnlyList<Matrix> shapeGradientsNatural =
+				Interpolation.EvaluateNaturalGradientsAtGaussPoints(QuadratureForConsistentMass);
+
+			double area = 0;
+			for (int gp = 0; gp < QuadratureForConsistentMass.IntegrationPoints.Count; ++gp)
+			{
+				var jacobian = new IsoparametricJacobian3D(Nodes, shapeGradientsNatural[gp]);
+				area += jacobian.DirectDeterminant * QuadratureForConsistentMass.IntegrationPoints[gp].Weight;
+			}
+
+			double nodalMass = area * dynamicProperties.Density / Nodes.Count;
+			for (int i = 0; i < numberOfDofs; i++) lumpedMass[i, i] = nodalMass;
+
+			return lumpedMass;
 		}
 
-		public virtual IMatrix DampingMatrix()
+		public IMatrix DampingMatrix()
 		{
-			throw new NotImplementedException();
+			IMatrix damping = StiffnessMatrix();
+			damping.ScaleIntoThis(dynamicProperties.RayleighCoeffStiffness);
+			damping.AxpyIntoThis(MassMatrix(), dynamicProperties.RayleighCoeffMass);
+			return damping;
 		}
+
+		public double[] VolumeLoads()
+		{
+			int numDofs = Nodes.Count;
+			var volumeLoads = new double[3 * numDofs];
+			IReadOnlyList<double[]> shapeFunctions =
+				Interpolation.EvaluateFunctionsAtGaussPoints(QuadratureForConsistentMass);
+			IReadOnlyList<Matrix> shapeGradientsNatural =
+				Interpolation.EvaluateNaturalGradientsAtGaussPoints(QuadratureForConsistentMass);
+
+			for (int gp = 0; gp < QuadratureForConsistentMass.IntegrationPoints.Count; ++gp)
+			{
+				Matrix shapeFunctionMatrix = BuildShapeFunctionMatrix(shapeFunctions[gp]).Transpose();
+				var jacobian = new IsoparametricJacobian3D(Nodes, shapeGradientsNatural[gp], 1e-20);
+				double dA = jacobian.DirectDeterminant * QuadratureForConsistentMass.IntegrationPoints[gp].Weight;
+				double cx = dA * volumeForce[0];
+				double cy = dA * volumeForce[1];
+				double cz = dA * volumeForce[2];
+				var forcesX = shapeFunctionMatrix.Scale(cx).CopyToArray2D();
+				var forcesy = shapeFunctionMatrix.Scale(cy).CopyToArray2D();
+				var forcesz = shapeFunctionMatrix.Scale(cz).CopyToArray2D();
+
+				for (int i1 = 0; i1 < numDofs; i1++)
+				{
+					volumeLoads[3 * i1 + 0] += forcesX[i1, 0];
+					volumeLoads[3 * i1 + 1] += forcesy[i1, 0];
+					volumeLoads[3 * i1 + 2] += forcesz[i1, 0];
+				}
+
+			}
+
+			return volumeLoads;
+		}
+
+		public Matrix BuildShapeFunctionMatrix(double[] shapeFunctions)
+		{
+			return Matrix.CreateFromArray(shapeFunctions, 1, shapeFunctions.Length);
+		}
+
 		#endregion
 	}
 }

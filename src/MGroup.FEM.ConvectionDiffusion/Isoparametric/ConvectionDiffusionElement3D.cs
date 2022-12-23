@@ -12,6 +12,7 @@ using MGroup.MSolve.Discretization.BoundaryConditions;
 using MGroup.MSolve.Discretization.Dofs;
 using MGroup.MSolve.Discretization.Entities;
 using MGroup.MSolve.Discretization.Meshes;
+using System.Linq;
 
 namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 {
@@ -20,6 +21,11 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 		private readonly static IDofType[] nodalDOFTypes = new IDofType[] { ConvectionDiffusionDof.UnknownVariable};
 		private readonly IDofType[][] dofTypes;
 		private readonly IConvectionDiffusionProperties material;
+		public double[][] pressureTensorDivergenceAtGaussPoints;
+		public List<double[][]> pressureTensorDivergenceAtGaussPointsOverTimeSteps = new List<double[][]>();
+		public double[] xcoeff_OverTimeAtGp1{get { return pressureTensorDivergenceAtGaussPointsOverTimeSteps.Select(x => x[0][0]).ToArray(); }	}
+		public double[] xcoeff_OverTimeAtGp2 { get { return pressureTensorDivergenceAtGaussPointsOverTimeSteps.Select(x => x[0][1]).ToArray(); } }
+		public double[] xcoeff_OverTimeAtGp3 { get { return pressureTensorDivergenceAtGaussPointsOverTimeSteps.Select(x => x[0][2]).ToArray(); } }
 
 		public ConvectionDiffusionElement3D(IReadOnlyList<INode> nodes, IIsoparametricInterpolation3D interpolation,
 		IQuadrature3D quadratureForStiffness, IQuadrature3D quadratureForMass,
@@ -35,6 +41,8 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 
 			dofTypes = new IDofType[nodes.Count][];
 			for (int i = 0; i < interpolation.NumFunctions; ++i) dofTypes[i] = new IDofType[] { ConvectionDiffusionDof.UnknownVariable };
+
+			pressureTensorDivergenceAtGaussPoints = new double[quadratureForStiffness.IntegrationPoints.Count][];
 		}
 
 		public CellType CellType => Interpolation.CellType;
@@ -296,11 +304,40 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 
 			//return DiffusionMatrix().Add(ConvectionMatrix()).Add(ProductionMatrix());
 			double[] difConvResponseVector = DiffusionMatrix().Add(ConvectionMatrix()).Multiply(localDisplacements);
-			double[] productionResponseVector = CalculateProductionRepsonse();
+		    double[] productionResponseVector = CalculateProductionRepsonse();
+			UpdatePressureAndGradients(localDisplacements);
 
 			return difConvResponseVector.Add(productionResponseVector);
 
 
+		}
+
+		private void UpdatePressureAndGradients(double[] localDisplacements)
+		{
+			IReadOnlyList<Matrix> shapeFunctionNaturalDerivatives;
+			shapeFunctionNaturalDerivatives = Interpolation.EvaluateNaturalGradientsAtGaussPoints(QuadratureForStiffness);
+			var jacobians = shapeFunctionNaturalDerivatives.Select(x => new IsoparametricJacobian3D(Nodes, x));
+			Matrix[] jacobianInverse = jacobians.Select(x => x.InverseMatrix.Transpose()).ToArray();
+			for (int gp = 0; gp < QuadratureForConsistentMass.IntegrationPoints.Count; ++gp)
+			{
+				double[] dphi_dnatural = new double[3]; //{ dphi_dksi, dphi_dheta, dphi_dzeta}
+				for (int i1 = 0; i1 < shapeFunctionNaturalDerivatives[gp].NumRows; i1++)
+				{
+					dphi_dnatural[0] += shapeFunctionNaturalDerivatives[gp][i1,0] * localDisplacements[i1];
+					dphi_dnatural[1] += shapeFunctionNaturalDerivatives[gp][i1, 1] * localDisplacements[i1];
+					dphi_dnatural[2] += shapeFunctionNaturalDerivatives[gp][i1, 2] * localDisplacements[i1];
+				}
+
+				var dphi_dnaturalMAT = Matrix.CreateFromArray(dphi_dnatural, 1,3);
+
+				var dphi_dcartesian = dphi_dnaturalMAT * jacobianInverse[gp].Transpose();
+
+				pressureTensorDivergenceAtGaussPoints[gp] = new double[3] { dphi_dcartesian[0, 0], dphi_dcartesian[0, 1], dphi_dcartesian[0, 2] };
+
+				
+
+
+			}
 		}
 
 		private static bool LinearProduction = false;
@@ -369,7 +406,7 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 
 		public void SaveConstitutiveLawState(IHaveState externalState)
 		{
-			throw new NotImplementedException();
+			pressureTensorDivergenceAtGaussPointsOverTimeSteps.Add(pressureTensorDivergenceAtGaussPoints);
 		}
 
 		public void ClearConstitutiveLawState()
