@@ -42,7 +42,7 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 			dofTypes = new IDofType[nodes.Count][];
 			for (int i = 0; i < interpolation.NumFunctions; ++i) dofTypes[i] = new IDofType[] { ConvectionDiffusionDof.UnknownVariable };
 
-			pressureTensorDivergenceAtGaussPoints = new double[quadratureForStiffness.IntegrationPoints.Count][];
+			pressureTensorDivergenceAtGaussPoints = new double[quadratureForMass.IntegrationPoints.Count][];
 		}
 
 		public CellType CellType => Interpolation.CellType;
@@ -315,7 +315,7 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 		private void UpdatePressureAndGradients(double[] localDisplacements)
 		{
 			IReadOnlyList<Matrix> shapeFunctionNaturalDerivatives;
-			shapeFunctionNaturalDerivatives = Interpolation.EvaluateNaturalGradientsAtGaussPoints(QuadratureForStiffness);
+			shapeFunctionNaturalDerivatives = Interpolation.EvaluateNaturalGradientsAtGaussPoints(QuadratureForConsistentMass);
 			var jacobians = shapeFunctionNaturalDerivatives.Select(x => new IsoparametricJacobian3D(Nodes, x));
 			Matrix[] jacobianInverse = jacobians.Select(x => x.InverseMatrix.Transpose()).ToArray();
 			for (int gp = 0; gp < QuadratureForConsistentMass.IntegrationPoints.Count; ++gp)
