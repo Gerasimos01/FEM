@@ -24,8 +24,16 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 		public double[][] pressureTensorDivergenceAtGaussPoints;
 		public List<double[][]> pressureTensorDivergenceAtGaussPointsOverTimeSteps = new List<double[][]>();
 		public double[] xcoeff_OverTimeAtGp1{get { return pressureTensorDivergenceAtGaussPointsOverTimeSteps.Select(x => x[0][0]).ToArray(); }	}
-		public double[] xcoeff_OverTimeAtGp2 { get { return pressureTensorDivergenceAtGaussPointsOverTimeSteps.Select(x => x[0][1]).ToArray(); } }
-		public double[] xcoeff_OverTimeAtGp3 { get { return pressureTensorDivergenceAtGaussPointsOverTimeSteps.Select(x => x[0][2]).ToArray(); } }
+		public double[] ycoeff_OverTimeAtGp1 { get { return pressureTensorDivergenceAtGaussPointsOverTimeSteps.Select(x => x[0][1]).ToArray(); } }
+		public double[] zcoeff_OverTimeAtGp1 { get { return pressureTensorDivergenceAtGaussPointsOverTimeSteps.Select(x => x[0][2]).ToArray(); } }
+
+		public bool LinearProduction { get; set; } = true;
+
+		public Func<double,double> ProductionFunction { get; set; }
+
+		public Func<double, double> ProductionFunctionDerivative { get; set; }
+
+
 
 		public ConvectionDiffusionElement3D(IReadOnlyList<INode> nodes, IIsoparametricInterpolation3D interpolation,
 		IQuadrature3D quadratureForStiffness, IQuadrature3D quadratureForMass,
@@ -340,7 +348,7 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 			}
 		}
 
-		private static bool LinearProduction = false;
+		
 
 		public double[] CalculateProductionRepsonse()
 		{
@@ -349,15 +357,15 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 			else { return CalculateNonLinearProductionRepsonse(); }
 		}
 
-		public double ProductionFunction(double phi)
-		{
-			return material.DependentSourceCoeff * phi;
-		}
+		//public double ProductionFunction(double phi)
+		//{
+		//	return material.DependentSourceCoeff * phi;
+		//}
 
-		public double ProductionFunctionDerivative(double phi)
-		{
-			return material.DependentSourceCoeff;
-		}
+		//public double ProductionFunctionDerivative(double phi)
+		//{
+		//	return material.DependentSourceCoeff;
+		//}
 
 		private double[] CalculateNonLinearProductionRepsonse()
 		{
@@ -407,6 +415,13 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 		public void SaveConstitutiveLawState(IHaveState externalState)
 		{
 			pressureTensorDivergenceAtGaussPointsOverTimeSteps.Add(pressureTensorDivergenceAtGaussPoints);
+			var tempCopy = new double[QuadratureForConsistentMass.IntegrationPoints.Count][];
+			for (int i = 0; i < tempCopy.Length; i++)
+			{
+				tempCopy[i] = pressureTensorDivergenceAtGaussPoints[i].Copy();
+			}
+			pressureTensorDivergenceAtGaussPoints = tempCopy;
+
 		}
 
 		public void ClearConstitutiveLawState()

@@ -54,7 +54,7 @@ namespace MGroup.FEM.Structural.Continuum
 			get { return velocityDivergenceOverTimeSteps.Select(x => x[0]).ToArray(); }
 	 	}
 
-		public double[] volumeForce { get; set; }
+		public double[] volumeForce { get; set; } = new double[3];
 
 
 
@@ -88,6 +88,8 @@ namespace MGroup.FEM.Structural.Continuum
 					StructuralDof.TranslationX, StructuralDof.TranslationY, StructuralDof.TranslationZ
 				};
 			}
+
+			volumeForce = new double[3];
 		}
 
 		private IIsoparametricInterpolation3D Interpolation { get; }
@@ -832,7 +834,8 @@ namespace MGroup.FEM.Structural.Continuum
 				lastConvergedDefGradTransposed[npoint] = deformationGradientsTransposed[npoint];
 			}
 			velocityDivergenceOverTimeSteps.Add(velocityDivergence);
-			velocityDivergence = new double[nGaussPoints];
+			var tempCopy = velocityDivergence.Copy();
+			velocityDivergence = tempCopy;
 
 			foreach (IContinuumMaterial3D m in materialsAtGaussPoints) m.CreateState();
 
