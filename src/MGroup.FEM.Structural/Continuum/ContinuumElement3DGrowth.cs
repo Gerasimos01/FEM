@@ -88,8 +88,6 @@ namespace MGroup.FEM.Structural.Continuum
 					StructuralDof.TranslationX, StructuralDof.TranslationY, StructuralDof.TranslationZ
 				};
 			}
-
-			volumeForce = new double[3];
 		}
 
 		private IIsoparametricInterpolation3D Interpolation { get; }
