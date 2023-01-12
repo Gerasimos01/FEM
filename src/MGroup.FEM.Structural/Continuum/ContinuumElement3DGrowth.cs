@@ -42,17 +42,35 @@ namespace MGroup.FEM.Structural.Continuum
 		private double[][] strainsVec;
 		private double[][] lastStresses;
 		private double[][] DefGradVec;
-		
+
 		private double lambdag = 1;
-		public static double dT = 0.1;
+		public static double dT = 0.001;
 		private Matrix[] lastConvergedDefGradTransposed;
+		private double[] lastConvergedDisplacements;
+		private double[] localDisplacements;
 		private Matrix[] deformationGradientsTransposed;
 		public double[] velocityDivergence;
+		public double[] velocityDivergence_term1; public double[] velocityDivergence_term2; public double[] velocityDivergence_term3;
 		public List<double[]> velocityDivergenceOverTimeSteps = new List<double[]>();
+		public List<double[]> velocityDivergence_term1OverTimeSteps = new List<double[]>();
+		public List<double[]> velocityDivergence_term2OverTimeSteps = new List<double[]>();
+		public List<double[]> velocityDivergence_term3OverTimeSteps = new List<double[]>();
 		public double[] velocityDivergenceOverTimeAtGP1
 		{
 			get { return velocityDivergenceOverTimeSteps.Select(x => x[0]).ToArray(); }
-	 	}
+		}
+		public double[] velocityDivergenceterm1overTimeAtGP1
+		{
+			get { return velocityDivergence_term1OverTimeSteps.Select(x => x[0]).ToArray(); }
+		}
+		public double[] velocityDivergenceterm2OverTimeAtGP1
+		{
+			get { return velocityDivergence_term2OverTimeSteps.Select(x => x[0]).ToArray(); }
+		}
+		public double[] velocityDivergenceterm3OverTimeAtGP1
+		{
+			get { return velocityDivergence_term3OverTimeSteps.Select(x => x[0]).ToArray(); }
+		}
 
 		public double[] volumeForce { get; set; } = new double[3];
 
@@ -269,7 +287,9 @@ namespace MGroup.FEM.Structural.Continuum
 			totalDisplacements = new double[numNodes][];
 			DefGradVec = new double[nGaussPoints][];
 			lastConvergedDefGradTransposed = new Matrix[nGaussPoints];
+			lastConvergedDisplacements = new double[numNodes * 3];
 			velocityDivergence = new double[nGaussPoints];
+			velocityDivergence_term1 = new double[nGaussPoints]; velocityDivergence_term2 = new double[nGaussPoints]; velocityDivergence_term3 = new double[nGaussPoints];
 			deformationGradientsTransposed = new Matrix[nGaussPoints];
 			for (int gpoint = 0; gpoint < nGaussPoints; gpoint++)
 			{
@@ -305,6 +325,9 @@ namespace MGroup.FEM.Structural.Continuum
 
 		private void CalculateStrains(double[] localdisplacements, double[][] deformedCoordinates)
 		{
+			localDisplacements = localdisplacements;
+
+
 			IReadOnlyList<Matrix> shapeFunctionNaturalDerivatives;
 			shapeFunctionNaturalDerivatives = Interpolation.EvaluateNaturalGradientsAtGaussPoints(QuadratureForStiffness);
 			var jacobians = shapeFunctionNaturalDerivatives.Select(x => new IsoparametricJacobian3D(Nodes, x));
@@ -330,13 +353,60 @@ namespace MGroup.FEM.Structural.Continuum
 					deformationGradientsTransposed[npoint][0, 2], deformationGradientsTransposed[npoint][2, 0], deformationGradientsTransposed[npoint][0, 1],
 					deformationGradientsTransposed[npoint][1, 2], };//MS
 
-				var DdeformationGradientsTransposed_DT = (deformationGradientsTransposed[npoint] - lastConvergedDefGradTransposed[npoint]).Scale(1/dT);
+				var DdeformationGradientsTransposed_DT = (deformationGradientsTransposed[npoint] - lastConvergedDefGradTransposed[npoint]).Scale(1 / dT);
 				var DefGradInverse = deformationGradientsTransposed[npoint].Transpose().Invert();
 				var velocityGradient = DdeformationGradientsTransposed_DT.Transpose() * DefGradInverse;
+				//WARNING THESE ARE TEMPORARILLY OVERRWITEN
 				velocityDivergence[npoint] = velocityGradient[0, 0] + velocityGradient[1, 1] + velocityGradient[2, 2];
-				
+				//WARNING THESE ARE TEMPORARILLY OVERRWITEN
+				velocityDivergence_term1[npoint] = velocityGradient[0, 0]; velocityDivergence_term2[npoint] = velocityGradient[1, 1]; velocityDivergence_term3[npoint] = velocityGradient[2, 2];
+
+				var Ddisplacements_DT = new double[localdisplacements.Length];
+				for (int i2 = 0; i2 < localdisplacements.Length; i2++)
+				{
+					Ddisplacements_DT[i2] = (localdisplacements[i2] - lastConvergedDisplacements[i2]) / dT;
+				}
+
+
+				double[,] dvi_dnaturalj = new double[3, 3]; //{ dphi_dksi, dphi_dheta, dphi_dzeta}
+				for (int i1 = 0; i1 < shapeFunctionNaturalDerivatives[npoint].NumRows; i1++)
+				{
+					dvi_dnaturalj[0, 0] += shapeFunctionNaturalDerivatives[npoint][i1, 0] * Ddisplacements_DT[3 * i1 + 0];
+					dvi_dnaturalj[0, 1] += shapeFunctionNaturalDerivatives[npoint][i1, 1] * Ddisplacements_DT[3 * i1 + 0];
+					dvi_dnaturalj[0, 2] += shapeFunctionNaturalDerivatives[npoint][i1, 2] * Ddisplacements_DT[3 * i1 + 0];
+
+					dvi_dnaturalj[1, 0] += shapeFunctionNaturalDerivatives[npoint][i1, 0] * Ddisplacements_DT[3 * i1 + 1];
+					dvi_dnaturalj[1, 1] += shapeFunctionNaturalDerivatives[npoint][i1, 1] * Ddisplacements_DT[3 * i1 + 1];
+					dvi_dnaturalj[1, 2] += shapeFunctionNaturalDerivatives[npoint][i1, 2] * Ddisplacements_DT[3 * i1 + 1];
+
+					dvi_dnaturalj[2, 0] += shapeFunctionNaturalDerivatives[npoint][i1, 0] * Ddisplacements_DT[3 * i1 + 2];
+					dvi_dnaturalj[2, 1] += shapeFunctionNaturalDerivatives[npoint][i1, 1] * Ddisplacements_DT[3 * i1 + 2];
+					dvi_dnaturalj[2, 2] += shapeFunctionNaturalDerivatives[npoint][i1, 2] * Ddisplacements_DT[3 * i1 + 2];
+				}
+
+				var dvi_dnaturaljMAT = Matrix.CreateFromArray(dvi_dnaturalj);
+
+				var dvi_dcartesianj = dvi_dnaturaljMAT * jacobianInverse[npoint].Transpose();
+
+				velocityDivergence[npoint] = dvi_dcartesianj[0, 0] + dvi_dcartesianj[1, 1] + dvi_dcartesianj[2, 2];
+				velocityDivergence_term1[npoint] = dvi_dcartesianj[0, 0]; velocityDivergence_term2[npoint] = dvi_dcartesianj[1, 1]; velocityDivergence_term3[npoint] = dvi_dcartesianj[2, 2];
+
 
 			}
+		}
+
+		public double[] GetGaussPointsCoordinates(int gpNo)
+		{
+			var shapeFunctionValues = Interpolation.EvaluateFunctionsAt(QuadratureForStiffness.IntegrationPoints[gpNo]);
+			double[] gpCoordinates = new double[3]; //{ dphi_dksi, dphi_dheta, dphi_dzeta}
+			for (int i1 = 0; i1 < shapeFunctionValues.Length; i1++)
+			{
+				gpCoordinates[0] += shapeFunctionValues[i1] * Nodes[i1].X;
+				gpCoordinates[1] += shapeFunctionValues[i1] * Nodes[i1].Y;
+				gpCoordinates[2] += shapeFunctionValues[i1] * Nodes[i1].Z;
+			}
+
+			return gpCoordinates;
 		}
 
 		private double[] UpdateResponseIntegral()
@@ -819,7 +889,7 @@ namespace MGroup.FEM.Structural.Continuum
 			//foreach (IContinuumMaterial3DDefGrad m in materialsAtGaussPoints) m.ClearState();
 		}
 
-		
+
 
 		public void SaveConstitutiveLawState(IHaveState externalState)
 		{
@@ -829,13 +899,28 @@ namespace MGroup.FEM.Structural.Continuum
 			//	{ strainsVecLastConverged[npoint][i1] = strainsVec[npoint][i1]; }
 			//}
 
+			lastConvergedDisplacements = localDisplacements.Copy();
+
 			for (int npoint = 0; npoint < nGaussPoints; npoint++)
 			{
-				lastConvergedDefGradTransposed[npoint] = deformationGradientsTransposed[npoint];
+				lastConvergedDefGradTransposed[npoint] = deformationGradientsTransposed[npoint].Copy();
 			}
-			velocityDivergenceOverTimeSteps.Add(velocityDivergence);
-			var tempCopy = velocityDivergence.Copy();
-			velocityDivergence = tempCopy;
+
+
+
+
+			velocityDivergenceOverTimeSteps.Add(velocityDivergence.Copy());
+			//velocityDivergence = new double[nGaussPoints];
+
+			velocityDivergence_term1OverTimeSteps.Add(velocityDivergence_term1.Copy());
+			//velocityDivergence_term1 = new double[nGaussPoints];
+
+
+			velocityDivergence_term2OverTimeSteps.Add(velocityDivergence_term2.Copy());
+			//velocityDivergence_term2 = new double[nGaussPoints];
+
+			velocityDivergence_term3OverTimeSteps.Add(velocityDivergence_term3.Copy());
+			//velocityDivergence_term3 = new double[nGaussPoints];
 
 			foreach (IContinuumMaterial3D m in materialsAtGaussPoints) m.CreateState();
 
