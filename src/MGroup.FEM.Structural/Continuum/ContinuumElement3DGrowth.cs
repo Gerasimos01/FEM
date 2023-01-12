@@ -106,6 +106,8 @@ namespace MGroup.FEM.Structural.Continuum
 			set { dofEnumerator = value; }
 		}
 
+		public bool UseConsistentMass { get; private set; } = true;
+
 		//public IReadOnlyList<IStructuralMaterial> Materials => materialsAtGaussPoints;
 
 		private Matrix[] Getbl13DeformationMatrices(IReadOnlyList<Matrix> shapeFunctionNaturalDerivatives)
@@ -864,7 +866,11 @@ namespace MGroup.FEM.Structural.Continuum
 		//{
 		//    throw new NotImplementedException();
 		//}
-		public virtual IMatrix MassMatrix() => BuildLumpedMassMatrix();
+		//public virtual IMatrix MassMatrix() => BuildLumpedMassMatrix();
+		public virtual IMatrix MassMatrix()
+		{
+			return (UseConsistentMass ? BuildConsistentMassMatrix() : BuildLumpedMassMatrix());
+		}
 
 		public Matrix BuildLumpedMassMatrix()
 		{
@@ -884,6 +890,40 @@ namespace MGroup.FEM.Structural.Continuum
 			for (int i = 0; i < numberOfDofs; i++) lumpedMass[i, i] = nodalMass;
 
 			return lumpedMass;
+		}
+
+		public Matrix BuildConsistentMassMatrix()
+		{
+			int numberOfDofs = 3 * Nodes.Count;
+			var mass = Matrix.CreateZero(numberOfDofs, numberOfDofs);
+			IReadOnlyList<double[]> shapeFunctions =
+				Interpolation.EvaluateFunctionsAtGaussPoints(QuadratureForConsistentMass);
+			IReadOnlyList<Matrix> shapeGradientsNatural =
+				Interpolation.EvaluateNaturalGradientsAtGaussPoints(QuadratureForConsistentMass);
+
+			for (int gp = 0; gp < QuadratureForConsistentMass.IntegrationPoints.Count; ++gp)
+			{
+				Matrix shapeFunctionMatrix = BuildReShapedFunctionMatrix(shapeFunctions[gp]);
+				Matrix partial = shapeFunctionMatrix.MultiplyRight(shapeFunctionMatrix, true, false);
+				var jacobian = new IsoparametricJacobian3D(Nodes, shapeGradientsNatural[gp]);
+				double dA = jacobian.DirectDeterminant * QuadratureForConsistentMass.IntegrationPoints[gp].Weight;
+				mass.AxpyIntoThis(partial, dA);
+			}
+			mass.ScaleIntoThis(dynamicProperties.Density);
+			return mass;
+		}
+
+		private Matrix BuildReShapedFunctionMatrix(double[] shapeFunctions)
+		{
+			var shapeFunctionMatrix = Matrix.CreateZero(3, 3 * shapeFunctions.Length);
+			for (int i = 0; i < shapeFunctions.Length; i++)
+			{
+				shapeFunctionMatrix[0, 3 * i] = shapeFunctions[i];
+				shapeFunctionMatrix[1, (3 * i) + 1] = shapeFunctions[i];
+				shapeFunctionMatrix[2, (3 * i) + 2] = shapeFunctions[i];
+			}
+
+			return shapeFunctionMatrix;
 		}
 
 		public IMatrix DampingMatrix()
