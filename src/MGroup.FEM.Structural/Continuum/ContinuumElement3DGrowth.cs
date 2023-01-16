@@ -44,7 +44,7 @@ namespace MGroup.FEM.Structural.Continuum
 		private double[][] DefGradVec;
 
 		private double lambdag = 1;
-		public static double dT = 0.001;
+		public static double dT = 0.0005;
 		private Matrix[] lastConvergedDefGradTransposed;
 		private double[] lastConvergedDisplacements;
 		private double[] localDisplacements;
