@@ -46,8 +46,8 @@ namespace MGroup.FEM.Structural.Continuum
 		private double lambdag = 1;
 		public static double dT = 0.0005;
 		private Matrix[] lastConvergedDefGradTransposed;
-		private double[] lastConvergedDisplacements;
-		private double[] localDisplacements;
+		public double[] lastConvergedDisplacements { get; set; }
+		public double[] localDisplacements { get; private set; }
 		private Matrix[] deformationGradientsTransposed;
 		public double[] velocityDivergence;
 		public double[] velocityDivergence_term1; public double[] velocityDivergence_term2; public double[] velocityDivergence_term3;
@@ -287,7 +287,7 @@ namespace MGroup.FEM.Structural.Continuum
 			totalDisplacements = new double[numNodes][];
 			DefGradVec = new double[nGaussPoints][];
 			lastConvergedDefGradTransposed = new Matrix[nGaussPoints];
-			lastConvergedDisplacements = new double[numNodes * 3];
+			if (lastConvergedDisplacements is null){ lastConvergedDisplacements = new double[numNodes * 3]; }
 			velocityDivergence = new double[nGaussPoints];
 			velocityDivergence_term1 = new double[nGaussPoints]; velocityDivergence_term2 = new double[nGaussPoints]; velocityDivergence_term3 = new double[nGaussPoints];
 			deformationGradientsTransposed = new Matrix[nGaussPoints];
@@ -566,6 +566,17 @@ namespace MGroup.FEM.Structural.Continuum
 			for (int npoint = 0; npoint < nGaussPoints; npoint++)
 			{
 				forces[nGaussPoints].AddIntoThis(forces[npoint]);
+			}
+
+			for (int i1 = 0; i1 < forces.Length; i1++)
+			{
+				for (int i2 = 0; i2 < forces[i1].Length; i2++)
+				{
+					if (double.IsNaN(forces[i1][i2]))
+					{
+						var breakpoint = "here";
+					}
+				}
 			}
 
 			return forces[nGaussPoints];
@@ -848,6 +859,12 @@ namespace MGroup.FEM.Structural.Continuum
 					DefGradVecEl[i] = DefGradVec[npoint][i] / lambdag;
 				}
 				lastStresses[npoint] = materialsAtGaussPoints[npoint].UpdateConstitutiveMatrixAndEvaluateResponse(DefGradVecEl); //MS
+
+				for (int i1 = 0; i1 < lastStresses[npoint].Length; i1++)
+				{
+					if (double.IsNaN(lastStresses[npoint][i1]))
+					{ var breakpoint = "here"; }
+				}
 			};
 
 			return new Tuple<double[], double[]>(DefGradVec[materialsAtGaussPoints.Length - 1], lastStresses[materialsAtGaussPoints.Length - 1]);
@@ -870,6 +887,7 @@ namespace MGroup.FEM.Structural.Continuum
 				int numNodes = Nodes.Count();
 				this.CalculateInitialConfigurationData();
 				var localTotalDisplacements = new double[3 * numNodes];
+				localTotalDisplacements.CopyFrom(lastConvergedDisplacements);
 				this.UpdateCoordinateData(localTotalDisplacements, out double[][] deformedCoordinates);
 				this.CalculateStrains(localTotalDisplacements, deformedCoordinates);
 			}
@@ -899,13 +917,17 @@ namespace MGroup.FEM.Structural.Continuum
 			//	{ strainsVecLastConverged[npoint][i1] = strainsVec[npoint][i1]; }
 			//}
 
-			lastConvergedDisplacements = localDisplacements.Copy();
+			//for (int i1 = 0; i1 < lastConvergedDisplacements.Length; i1++)
+			//{
+			//	lastConvergedDisplacements[i1] = localDisplacements[i1];
+			//}
+			//lastConvergedDisplacements = localDisplacements.Copy();
 
 			for (int npoint = 0; npoint < nGaussPoints; npoint++)
 			{
 				lastConvergedDefGradTransposed[npoint] = deformationGradientsTransposed[npoint].Copy();
 			}
-
+			lastConvergedDisplacements = localDisplacements.Copy();
 
 
 
@@ -1033,9 +1055,9 @@ namespace MGroup.FEM.Structural.Continuum
 				Matrix shapeFunctionMatrix = BuildShapeFunctionMatrix(shapeFunctions[gp]).Transpose();
 				var jacobian = new IsoparametricJacobian3D(Nodes, shapeGradientsNatural[gp], 1e-20);
 				double dA = jacobian.DirectDeterminant * QuadratureForConsistentMass.IntegrationPoints[gp].Weight;
-				double cx = dA * volumeForce[0];
-				double cy = dA * volumeForce[1];
-				double cz = dA * volumeForce[2];
+				double cx = -dA * volumeForce[0];
+				double cy = -dA * volumeForce[1];
+				double cz = -dA * volumeForce[2];
 				var forcesX = shapeFunctionMatrix.Scale(cx).CopyToArray2D();
 				var forcesy = shapeFunctionMatrix.Scale(cy).CopyToArray2D();
 				var forcesz = shapeFunctionMatrix.Scale(cz).CopyToArray2D();

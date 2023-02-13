@@ -307,6 +307,20 @@ namespace MGroup.FEM.ConvectionDiffusion.Isoparametric
 				
 		}
 
+		public double[] GetGaussPointsCoordinates(int gpNo)
+		{
+			var shapeFunctionValues = Interpolation.EvaluateFunctionsAt(QuadratureForStiffness.IntegrationPoints[gpNo]);
+			double[] gpCoordinates = new double[3]; //{ dphi_dksi, dphi_dheta, dphi_dzeta}
+			for (int i1 = 0; i1 < shapeFunctionValues.Length; i1++)
+			{
+				gpCoordinates[0] += shapeFunctionValues[i1] * Nodes[i1].X;
+				gpCoordinates[1] += shapeFunctionValues[i1] * Nodes[i1].Y;
+				gpCoordinates[2] += shapeFunctionValues[i1] * Nodes[i1].Z;
+			}
+
+			return gpCoordinates;
+		}
+
 		public double[] CalculateResponseIntegral()
 		{
 
